@@ -1,0 +1,17 @@
+-- Sketch only. These notes are not executed.
+--
+-- scans
+--   id TEXT primary key
+--   created_at TEXT
+--   source_name TEXT
+--   policy_json TEXT
+--
+-- findings
+--   id TEXT primary key
+--   scan_id TEXT
+--   rule_id TEXT
+--   severity TEXT
+--   title TEXT
+--   evidence TEXT
+--   impact TEXT
+--   remediation TEXT

@@ -1,0 +1,17 @@
+{
+  "name": "cloudguard",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web \"npm run dev -w @cloudguard/api\" \"npm run dev -w @cloudguard/web\"",
+    "dev:web": "npm run dev -w @cloudguard/web",
+    "dev:api": "npm run dev -w @cloudguard/api",
+    "test": "npm run test -w @cloudguard/api",
+    "typecheck": "npm run typecheck -w @cloudguard/web && npm run typecheck -w @cloudguard/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
