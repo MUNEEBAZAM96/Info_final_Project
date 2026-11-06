@@ -2,9 +2,10 @@ import { Position, type Edge, type Node } from "reactflow";
 
 export type GraphVariant = "secure" | "misconfigured" | "empty";
 
-const labels = ["Sample identity", "Sample role", "Allowed permission", "Sample resource"];
-
-export function buildPreviewGraph(variant: GraphVariant): {
+export function buildPreviewGraph(
+  variant: GraphVariant,
+  permission?: { action?: string; resource?: string },
+): {
   nodes: Node[];
   edges: Edge[];
   caption: string;
@@ -18,30 +19,37 @@ export function buildPreviewGraph(variant: GraphVariant): {
   }
 
   const highlighted = variant === "misconfigured";
+  const permissionLabel =
+    permission?.action || permission?.resource
+      ? `Allowed permission\n${permission.action ?? "*"}\n${permission.resource ?? "*"}`
+      : "Allowed permission";
+  const labels = ["Sample identity", "Sample role", permissionLabel, "Sample resource"];
   const nodes: Node[] = labels.map((label, index) => ({
     id: `node-${index}`,
     data: { label },
-    position: { x: index * 230, y: 100 },
+    position: { x: index * 230, y: 80 },
     sourcePosition: Position.Right,
     targetPosition: Position.Left,
     className: "cg-fade-node",
     style: highlighted
       ? {
-          width: 180,
+          width: 200,
           borderRadius: 8,
           border: "1px solid #e11d48",
           background: "#ffffff",
           color: "#0f172a",
           fontSize: 12,
+          whiteSpace: "pre-wrap",
           animationDelay: `${index * 80}ms`,
         }
       : {
-          width: 180,
+          width: 200,
           borderRadius: 8,
           border: "1px solid #cbd5e1",
           background: "#ffffff",
           color: "#0f172a",
           fontSize: 12,
+          whiteSpace: "pre-wrap",
           animationDelay: `${index * 80}ms`,
         },
   }));

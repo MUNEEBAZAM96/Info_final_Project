@@ -18,7 +18,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 
-import { findSampleByPolicy, getFindings, getSample, samples } from "./fixtures";
+import { analyzePolicy, listSamples, type AccessGraph, type ApiSample } from "./api";
 import { buildGuide, type GuideMode } from "./guide";
 import { buildPreviewGraph } from "./graphPreview";
 import type { Finding, PolicyDocument, SampleGroup, Severity } from "./types";
@@ -356,18 +356,54 @@ function ReviewColumn({
   );
 }
 
+function permissionFrom(graph: AccessGraph | undefined) {
+  const permission = graph?.permissions[0];
+  if (!permission) {
+    return undefined;
+  }
+  return { action: permission.action, resource: permission.resource };
+}
+
 export function CloudGuardHome() {
+  const [samples, setSamples] = useState<ApiSample[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedSampleId, setSelectedSampleId] = useState<string | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [uploadedPolicy, setUploadedPolicy] = useState<PolicyDocument | null>(null);
+  const [uploadedAnalysis, setUploadedAnalysis] = useState<{ findings: Finding[]; graph: AccessGraph } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    listSamples()
+      .then((next) => {
+        if (active) {
+          setSamples(next);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setLoadError("The analysis API is not running.");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const selectedSample = samples.find((sample) => sample.id === selectedSampleId) ?? null;
   const activePolicy = uploadedPolicy ?? selectedSample?.policy ?? null;
-  const findings = selectedSample ? getFindings(selectedSample.id) : [];
-  const unknownUpload = uploadedPolicy !== null;
-  const guideMode: GuideMode = !activePolicy ? "empty" : unknownUpload ? "unknown" : (selectedSample?.group ?? "empty");
-  const graph = useMemo(() => buildPreviewGraph(selectedSample?.group ?? "empty"), [selectedSample]);
+  const findings = uploadedAnalysis?.findings ?? selectedSample?.findings ?? [];
+  const activeGraph = uploadedAnalysis?.graph ?? selectedSample?.graph;
+  const guideMode: GuideMode = !activePolicy ? "empty" : findings.length > 0 ? "misconfigured" : "secure";
+  const graph = useMemo(
+    () =>
+      buildPreviewGraph(
+        !activePolicy ? "empty" : findings.length > 0 ? "misconfigured" : "secure",
+        permissionFrom(activeGraph),
+      ),
+    [activePolicy, findings, activeGraph],
+  );
 
   return (
     <Stack gap="lg">
@@ -376,6 +412,11 @@ export function CloudGuardHome() {
         <Text c="dimmed" mt={4}>
           Offline review of sample AWS IAM, trust, and S3 policies.
         </Text>
+        {loadError ? (
+          <Text size="sm" c="red.4" mt="sm">
+            {loadError}
+          </Text>
+        ) : null}
         {selectedSample ? (
           <div style={{ marginTop: 12 }}>
             <StatusLine group={selectedSample.group} findings={findings} />
@@ -412,6 +453,7 @@ export function CloudGuardHome() {
                                 setSelectedSampleId(sample.id);
                                 setUploadedFileName(null);
                                 setUploadedPolicy(null);
+                                setUploadedAnalysis(null);
                                 setUploadError(null);
                               }}
                               aria-pressed={selected}
@@ -459,26 +501,36 @@ export function CloudGuardHome() {
                   const reader = new FileReader();
                   reader.onload = () => {
                     const text = typeof reader.result === "string" ? reader.result : "";
+                    let parsed: unknown;
                     try {
-                      const parsed: unknown = JSON.parse(text);
-                      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-                        setUploadError("This file is not valid JSON.");
-                        return;
-                      }
-                      const policy = parsed as PolicyDocument;
-                      const match = findSampleByPolicy(policy);
-                      setUploadError(null);
-                      setUploadedFileName(file.name);
-                      if (match) {
-                        setSelectedSampleId(match.id);
-                        setUploadedPolicy(null);
-                        return;
-                      }
-                      setSelectedSampleId(null);
-                      setUploadedPolicy(policy);
+                      parsed = JSON.parse(text);
                     } catch {
                       setUploadError("This file is not valid JSON.");
+                      return;
                     }
+                    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+                      setUploadError("This file is not valid JSON.");
+                      return;
+                    }
+                    const policy = parsed as PolicyDocument;
+                    void analyzePolicy(policy)
+                      .then((result) => {
+                        const match = samples.find((sample) => JSON.stringify(sample.policy) === JSON.stringify(policy));
+                        setUploadError(null);
+                        setUploadedFileName(file.name);
+                        if (match) {
+                          setSelectedSampleId(match.id);
+                          setUploadedPolicy(null);
+                          setUploadedAnalysis(null);
+                          return;
+                        }
+                        setSelectedSampleId(null);
+                        setUploadedPolicy(policy);
+                        setUploadedAnalysis(result);
+                      })
+                      .catch(() => {
+                        setUploadError("This file is not valid JSON.");
+                      });
                   };
                   reader.readAsText(file);
                 }}
@@ -506,11 +558,6 @@ export function CloudGuardHome() {
             policy={activePolicy}
             fileName={selectedSample?.fileName ?? uploadedFileName}
             findings={findings}
-            findingsNote={
-              unknownUpload
-                ? "Rule analysis is not connected yet. This upload is shown only as policy text."
-                : undefined
-            }
             emptyFindingsText={
               activePolicy ? "No findings for this policy." : "Select a sample policy or upload a JSON file."
             }
@@ -526,14 +573,16 @@ export function CloudGuardHome() {
   );
 }
 
-export function CloudGuardScan({ sampleId }: { sampleId: string }) {
-  const sample = getSample(sampleId);
-  const findings = sample ? getFindings(sample.id) : [];
-  const graph = useMemo(() => buildPreviewGraph(sample?.group ?? "empty"), [sample]);
-
-  if (!sample) {
-    return <Text>No sample matches this id.</Text>;
-  }
+export function CloudGuardScan({ sample }: { sample: ApiSample }) {
+  const findings = sample.findings;
+  const graph = useMemo(
+    () =>
+      buildPreviewGraph(
+        findings.length > 0 ? "misconfigured" : "secure",
+        permissionFrom(sample.graph),
+      ),
+    [findings.length, sample.graph],
+  );
 
   return (
     <Stack gap="lg">
@@ -558,7 +607,7 @@ export function CloudGuardScan({ sampleId }: { sampleId: string }) {
           nodes={graph.nodes}
           edges={graph.edges}
           caption={graph.caption}
-          guideMode={sample.group}
+          guideMode={findings.length > 0 ? "misconfigured" : "secure"}
           invalidFile={false}
         />
       </div>

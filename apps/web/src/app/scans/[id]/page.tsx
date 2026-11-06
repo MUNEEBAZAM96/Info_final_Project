@@ -1,22 +1,31 @@
 import Link from "next/link";
 
+export const dynamic = "force-dynamic";
+
 import { Button, Stack, Text } from "@mantine/core";
 
+import { getApiSample } from "@/cloudguard/api";
 import { CloudGuardScan } from "@/cloudguard/ReviewScreens";
-import { getSample } from "@/cloudguard/fixtures";
 import { MainLayout } from "@/layouts/Main";
 
 export default async function ScanPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const sample = getSample(id);
+  let sample = null;
+  let unavailable = false;
+
+  try {
+    sample = await getApiSample(id);
+  } catch {
+    unavailable = true;
+  }
 
   return (
     <MainLayout>
       {sample ? (
-        <CloudGuardScan sampleId={sample.id} />
+        <CloudGuardScan sample={sample} />
       ) : (
         <Stack>
-          <Text>No sample matches this id.</Text>
+          <Text>{unavailable ? "The analysis API is not running." : "No sample matches this id."}</Text>
           <Button component={Link} href="/" w="fit-content">
             Back to dashboard
           </Button>
