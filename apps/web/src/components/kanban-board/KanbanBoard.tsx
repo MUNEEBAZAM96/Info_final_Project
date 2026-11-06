@@ -1,0 +1,618 @@
+'use client';
+
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverEvent,
+  DragOverlay,
+  DragStartEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import { SortableContext, arrayMove } from '@dnd-kit/sortable';
+import { Box, Button, LoadingOverlay, Portal, ScrollArea } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
+import { notifications } from '@mantine/notifications';
+import { IconNewSection, IconPlus } from '@tabler/icons-react';
+
+import { KanbanCard, KanbanColumn } from '@/components';
+import { useApiGet } from '@/lib/hooks/useApiGet';
+import { useApiWrite } from '@/lib/hooks/useApiWrite';
+import { API_CORE, API_WRITE } from '@/routes/api';
+
+import { NewTaskModal } from './NewTaskModal';
+
+import type { KanbanTaskDto } from '@/types';
+
+type Id = string | number;
+
+// Column type for local UI state
+interface IColumn {
+  id: Id;
+  title: string;
+  content?: string;
+}
+
+// Extended task type for local UI state (includes columnId for drag-n-drop)
+interface ITask extends Omit<KanbanTaskDto, 'id'> {
+  id: string;
+  columnId: Id;
+  content: string;
+}
+
+const defaultCols: IColumn[] = [
+  {
+    id: 'todo',
+    title: 'Todo',
+    content: 'Todo',
+  },
+  {
+    id: 'doing',
+    title: 'Work in progress',
+    content: 'Work in progress',
+  },
+  {
+    id: 'done',
+    title: 'Done',
+    content: 'Done',
+  },
+];
+
+const defaultTasks: ITask[] = [
+  {
+    id: '1',
+    columnId: 'todo',
+    content: 'List admin APIs for dashboard',
+    title: 'List admin APIs for dashboard',
+    status: '1',
+    comments: 0,
+    users: 0,
+  },
+  {
+    id: '2',
+    columnId: 'todo',
+    content:
+      'Develop user registration functionality with OTP delivered on SMS after email confirmation and phone number confirmation',
+    title: 'Develop user registration functionality',
+    status: '1',
+    comments: 3,
+    users: 0,
+  },
+  {
+    id: '3',
+    columnId: 'doing',
+    content: 'Conduct security testing',
+    title: 'Conduct security testing',
+    status: '2',
+    comments: 2,
+    users: 0,
+  },
+  {
+    id: '4',
+    columnId: 'doing',
+    content: 'Analyze competitors',
+    title: 'Analyze competitors',
+    status: '2',
+    comments: 0,
+    users: 0,
+  },
+  {
+    id: '5',
+    columnId: 'done',
+    content: 'Create UI kit documentation',
+    title: 'Create UI kit documentation',
+    status: '3',
+    comments: 1,
+    users: 0,
+  },
+  {
+    id: '6',
+    columnId: 'done',
+    content: 'Dev meeting',
+    title: 'Dev meeting',
+    status: '3',
+    comments: 4,
+    users: 0,
+  },
+  {
+    id: '7',
+    columnId: 'done',
+    content: 'Deliver dashboard prototype',
+    title: 'Deliver dashboard prototype',
+    status: '3',
+    comments: 15,
+    users: 0,
+  },
+  {
+    id: '8',
+    columnId: 'todo',
+    content: 'Optimize application performance',
+    title: 'Optimize application performance',
+    status: '1',
+    comments: 21,
+    users: 0,
+  },
+  {
+    id: '9',
+    columnId: 'todo',
+    content: 'Implement data validation',
+    title: 'Implement data validation',
+    status: '1',
+    comments: 16,
+    users: 0,
+  },
+  {
+    id: '10',
+    columnId: 'todo',
+    content: 'Design database schema',
+    title: 'Design database schema',
+    status: '1',
+    comments: 56,
+    users: 0,
+  },
+  {
+    id: '11',
+    columnId: 'todo',
+    content: 'Integrate SSL web certificates into workflow',
+    title: 'Integrate SSL web certificates into workflow',
+    status: '1',
+    comments: 99,
+    users: 0,
+  },
+  {
+    id: '12',
+    columnId: 'doing',
+    content: 'Implement error logging and monitoring',
+    title: 'Implement error logging and monitoring',
+    status: '2',
+    comments: 76,
+    users: 0,
+  },
+  {
+    id: '13',
+    columnId: 'doing',
+    content: 'Design and implement responsive UI',
+    title: 'Design and implement responsive UI',
+    status: '2',
+    comments: 45,
+    users: 0,
+  },
+];
+
+const KanbanBoard = () => {
+  const {
+    data: apiTasks,
+    loading: tasksLoading,
+    refetch,
+  } = useApiGet<any[]>(API_CORE.tasks);
+  const [columns, setColumns] = useState<IColumn[]>(defaultCols);
+  const columnsId = useMemo(() => columns.map((col) => col.id), [columns]);
+  const [tasks, setTasks] = useState<ITask[]>([]);
+  const [activeColumn, setActiveColumn] = useState<IColumn | null>(null);
+  const [activeTask, setActiveTask] = useState<ITask | null>(null);
+  const tablet_match = useMediaQuery('(max-width: 768px)');
+  const [newTaskModalOpened, setNewTaskModalOpened] = useState(false);
+  const [selectedColumnId, setSelectedColumnId] = useState<Id | null>(null);
+
+  // Track the intended drop target for persistence on drag end
+  const dropTargetRef = useRef<{
+    taskId: string;
+    newColumnId: Id;
+    newStatus: number;
+  } | null>(null);
+
+  // Remember where a dragged task started so a failed write can put it back
+  const dragOriginRef = useRef<{
+    taskId: string;
+    columnId: Id;
+    title: string;
+  } | null>(null);
+
+  // The move whose write is in flight, so its failure can be rolled back
+  const pendingMoveRef = useRef<{
+    taskId: string;
+    fromColumnId: Id;
+  } | null>(null);
+
+  const { refetch: createTaskRefetch, loading: createLoading } =
+    useApiWrite<any>('POST', API_WRITE.tasks, {
+      autoExecute: false,
+      onSuccess: () => refetch(),
+    });
+
+  const { refetch: deleteTaskRefetch } = useApiWrite<any>(
+    'DELETE',
+    API_WRITE.tasks,
+    { autoExecute: false, onSuccess: () => refetch() },
+  );
+
+  const { refetch: updateTaskRefetch, error: updateTaskError } =
+    useApiWrite<any>('PUT', API_WRITE.tasks, {
+      autoExecute: false,
+      onSuccess: () => {
+        pendingMoveRef.current = null;
+        refetch();
+      },
+    });
+
+  // The write hook reports a failed write as state instead of rejecting, so
+  // roll the dragged task back to where it started and surface the failure.
+  useEffect(() => {
+    if (!updateTaskError) return;
+
+    const pending = pendingMoveRef.current;
+    if (pending) {
+      setTasks((prevTasks) =>
+        prevTasks.map((task) =>
+          task.id === pending.taskId
+            ? { ...task, columnId: pending.fromColumnId }
+            : task,
+        ),
+      );
+      pendingMoveRef.current = null;
+    }
+
+    notifications.show({
+      title: 'Error',
+      message: updateTaskError.message,
+      color: 'red',
+    });
+  }, [updateTaskError]);
+
+  // Map API tasks to local task format
+  useEffect(() => {
+    if (apiTasks) {
+      const mappedTasks: ITask[] = apiTasks.map((task) => {
+        // Map status to columnId
+        let columnId: Id = 'todo';
+        if (task.status === '1' || task.status === 1) columnId = 'todo';
+        else if (task.status === '2' || task.status === 2) columnId = 'doing';
+        else if (task.status === '3' || task.status === 3) columnId = 'done';
+
+        return {
+          id: task.id || generateId().toString(),
+          columnId,
+          content: task.title || 'Untitled',
+          title: task.title || 'Untitled',
+          status: task.status || '1',
+          comments: task.comments || 0,
+          users: task.users || 0,
+        };
+      });
+      setTasks(mappedTasks);
+    }
+  }, [apiTasks]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 10,
+      },
+    }),
+  );
+
+  const id = useId();
+
+  if (tasksLoading) {
+    return <LoadingOverlay visible={true} />;
+  }
+
+  return (
+    <>
+      <ScrollArea
+        h="100%"
+        w="100%"
+        style={{
+          margin: 'auto',
+          display: 'flex',
+          minHeight: '70vh',
+          height: '100%',
+          width: '100%',
+          alignItems: 'center',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+        }}
+      >
+        <DndContext
+          id={id}
+          sensors={sensors}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragOver={onDragOver}
+        >
+          <Box
+            component="div"
+            style={{
+              margin: 'auto',
+              display: 'flex',
+              flexDirection: tablet_match ? 'column' : 'row',
+              gap: '1rem',
+            }}
+          >
+            <Box
+              component="div"
+              style={{
+                display: 'flex',
+                flexDirection: tablet_match ? 'column' : 'row',
+                gap: '1rem',
+              }}
+            >
+              <SortableContext items={columnsId}>
+                {columns.map((col) => (
+                  <KanbanColumn
+                    key={col.id}
+                    column={col}
+                    deleteColumn={deleteColumn}
+                    updateColumn={updateColumn}
+                    createTask={openNewTaskModal}
+                    deleteTask={deleteTask}
+                    updateTask={updateTask}
+                    tasks={tasks?.filter((task) => task.columnId === col.id)}
+                  />
+                ))}
+              </SortableContext>
+            </Box>
+            <Button
+              mt={tablet_match ? 'lg' : 0}
+              size="md"
+              variant="outline"
+              leftSection={<IconNewSection size={16} />}
+              style={{
+                width: '350px',
+                minWidth: '350px',
+                borderStyle: 'dashed',
+              }}
+              onClick={() => {
+                createNewColumn();
+              }}
+            >
+              Add a new bucket
+            </Button>
+          </Box>
+
+          <Portal>
+            <DragOverlay>
+              {activeColumn && (
+                <KanbanColumn
+                  column={activeColumn}
+                  deleteColumn={deleteColumn}
+                  updateColumn={updateColumn}
+                  createTask={openNewTaskModal}
+                  deleteTask={deleteTask}
+                  updateTask={updateTask}
+                  tasks={tasks.filter(
+                    (task) => task.columnId === activeColumn.id,
+                  )}
+                />
+              )}
+              {activeTask && (
+                <KanbanCard
+                  task={activeTask}
+                  deleteTask={deleteTask}
+                  updateTask={updateTask}
+                />
+              )}
+            </DragOverlay>
+          </Portal>
+        </DndContext>
+      </ScrollArea>
+
+      <NewTaskModal
+        opened={newTaskModalOpened}
+        onClose={() => setNewTaskModalOpened(false)}
+        onSubmit={createTask}
+        columnId={selectedColumnId || 'todo'}
+        loading={createLoading}
+      />
+    </>
+  );
+
+  function openNewTaskModal(columnId: Id) {
+    setSelectedColumnId(columnId);
+    setNewTaskModalOpened(true);
+  }
+
+  async function createTask(taskData: any) {
+    createTaskRefetch(API_WRITE.tasks, taskData);
+  }
+
+  async function deleteTask(id: Id) {
+    if (typeof id === 'string') {
+      deleteTaskRefetch(API_WRITE.taskDetail(id));
+    }
+  }
+
+  async function updateTask(id: Id, content: string) {
+    if (typeof id === 'string') {
+      const task = tasks.find((t) => t.id === id);
+      updateTaskRefetch(API_WRITE.taskDetail(id), {
+        title: content,
+        status: task?.status,
+      });
+    }
+  }
+
+  function createNewColumn() {
+    const columnToAdd: IColumn = {
+      id: generateId(),
+      title: `Column ${columns.length + 1}`,
+    };
+
+    setColumns([...columns, columnToAdd]);
+  }
+
+  function deleteColumn(id: Id) {
+    const filteredColumns = columns.filter((col) => col.id !== id);
+    setColumns(filteredColumns);
+
+    const newTasks = tasks.filter((t) => t.columnId !== id);
+    setTasks(newTasks);
+  }
+
+  function updateColumn(id: Id, title: string) {
+    const newColumns = columns.map((col) => {
+      if (col.id !== id) return col;
+      return { ...col, title };
+    });
+
+    setColumns(newColumns);
+  }
+
+  function onDragStart(event: DragStartEvent) {
+    if (event.active.data.current?.type === 'Column') {
+      setActiveColumn(event.active.data.current.column);
+      return;
+    }
+
+    if (event.active.data.current?.type === 'Task') {
+      const task = event.active.data.current.task as ITask;
+      setActiveTask(task);
+      dragOriginRef.current = {
+        taskId: String(event.active.id),
+        columnId: task.columnId,
+        title: task.title,
+      };
+      return;
+    }
+  }
+
+  function onDragEnd(event: DragEndEvent) {
+    setActiveColumn(null);
+    setActiveTask(null);
+
+    const dropTarget = dropTargetRef.current;
+    const origin = dragOriginRef.current;
+    dropTargetRef.current = null;
+    dragOriginRef.current = null;
+
+    const { active, over } = event;
+    if (!over) return;
+
+    const activeId = active.id;
+    const overId = over.id;
+
+    if (activeId === overId) return;
+
+    // Handle column reordering
+    if (active.data.current?.type === 'Column') {
+      setColumns((columns) => {
+        const activeColumnIndex = columns.findIndex(
+          (col) => col.id === activeId,
+        );
+        const overColumnIndex = columns.findIndex((col) => col.id === overId);
+        return arrayMove(columns, activeColumnIndex, overColumnIndex);
+      });
+      return;
+    }
+
+    // Handle task drop - persist the status change
+    if (active.data.current?.type === 'Task' && dropTarget) {
+      const { taskId, newColumnId, newStatus } = dropTarget;
+
+      // Only persist if the task actually moved to a different column
+      if (
+        origin &&
+        origin.taskId === taskId &&
+        origin.columnId !== newColumnId
+      ) {
+        // Record the move so the error effect can roll it back on failure
+        pendingMoveRef.current = {
+          taskId,
+          fromColumnId: origin.columnId,
+        };
+
+        // Persist to API using the write hook with the registry endpoint
+        updateTaskRefetch(API_WRITE.taskDetail(taskId), {
+          title: origin.title,
+          status: String(newStatus),
+        });
+      }
+    }
+  }
+
+  function onDragOver(event: DragOverEvent) {
+    const { active, over } = event;
+    if (!over) return;
+
+    const activeId = active.id;
+    const overId = over.id;
+
+    if (activeId === overId) return;
+
+    const isActiveATask = active.data.current?.type === 'Task';
+    const isOverATask = over.data.current?.type === 'Task';
+
+    if (!isActiveATask) return;
+
+    // Track the drop target for persistence on drag end
+    const getStatusFromColumn = (columnId: Id): number => {
+      if (columnId === 'doing') return 2;
+      if (columnId === 'done') return 3;
+      return 1;
+    };
+
+    // Im dropping a Task over another Task
+    if (isActiveATask && isOverATask) {
+      setTasks((tasks) => {
+        const activeIndex = tasks.findIndex((t) => t.id === activeId);
+        const overIndex = tasks.findIndex((t) => t.id === overId);
+
+        const newColumnId = tasks[overIndex].columnId;
+        const newStatus = getStatusFromColumn(newColumnId);
+
+        // Track for persistence on drag end
+        dropTargetRef.current = {
+          taskId: String(activeId),
+          newColumnId,
+          newStatus,
+        };
+
+        // Immutably update task position and column
+        return tasks.map((task, index) => {
+          if (index === activeIndex) {
+            return { ...task, columnId: newColumnId };
+          }
+          if (index === overIndex) {
+            return task; // Keep over task as is
+          }
+          return task;
+        });
+      });
+    }
+
+    const isOverAColumn = over.data.current?.type === 'Column';
+
+    // Im dropping a Task over a column
+    if (isActiveATask && isOverAColumn) {
+      setTasks((tasks) => {
+        const activeIndex = tasks.findIndex((t) => t.id === activeId);
+        const newStatus = getStatusFromColumn(overId);
+
+        // Track for persistence on drag end
+        dropTargetRef.current = {
+          taskId: String(activeId),
+          newColumnId: overId,
+          newStatus,
+        };
+
+        // Immutably update task column
+        return tasks.map((task, index) => {
+          if (index === activeIndex) {
+            return { ...task, columnId: overId };
+          }
+          return task;
+        });
+      });
+    }
+  }
+};
+
+function generateId() {
+  /* Generate a random number between 0 and 10000 */
+  return Math.floor(Math.random() * 10001);
+}
+
+export default KanbanBoard;

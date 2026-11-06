@@ -14,8 +14,24 @@
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],
-    "paths": { "@/*": ["./*"] }
+    "paths": {
+      "@/*": ["./src/*"],
+      "@public/*": ["./public/*"]
+    }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "legacy-tailwind",
+    "template-pages",
+    "components",
+    "lib",
+    "src/components",
+    "src/test",
+    "src/lib/api",
+    "src/lib/hooks",
+    "src/lib/changelog.ts",
+    "src/types",
+    "src/utils"
+  ]
 }
