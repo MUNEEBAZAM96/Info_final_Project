@@ -1,3 +1,4 @@
+import { ClerkProvider } from '@clerk/nextjs';
 import { ColorSchemeScript } from '@mantine/core';
 import { Inter } from 'next/font/google';
 
@@ -50,7 +51,26 @@ export default function RootLayout({
         <ColorSchemeScript defaultColorScheme="dark" />
       </head>
       <body>
-        <Providers>{children}</Providers>
+        <ClerkProvider
+          signInUrl="/sign-in"
+          signUpUrl="/sign-up"
+          afterSignOutUrl="/sign-in"
+          appearance={{
+            variables: {
+              colorPrimary: "#4c6ef5",
+              colorBackground: "#141b30",
+              colorForeground: "#eef1f8",
+              colorMutedForeground: "#aeb6cc",
+              colorInput: "#0e1426",
+              colorInputForeground: "#eef1f8",
+              colorNeutral: "#d5dbea",
+              borderRadius: "0.5rem",
+              fontFamily: "inherit",
+            },
+          }}
+        >
+          <Providers>{children}</Providers>
+        </ClerkProvider>
       </body>
     </html>
   );

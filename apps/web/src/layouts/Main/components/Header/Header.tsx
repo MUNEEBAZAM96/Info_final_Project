@@ -1,6 +1,7 @@
 'use client';
 
-import { ActionIcon, Badge, Group, Text, Tooltip } from '@mantine/core';
+import { Show, SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
+import { ActionIcon, Badge, Button, Group, Text, Tooltip } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconMenu2 } from '@tabler/icons-react';
 
@@ -49,9 +50,24 @@ const HeaderNav = ({
           </Text>
         </div>
       </Group>
-      <Badge variant="light" color="indigo" radius="sm">
-        Local fixtures
-      </Badge>
+      <Group gap="sm" wrap="nowrap">
+        <Show when="signed-out">
+          <SignInButton mode="redirect">
+            <Button variant="default" size="compact-sm">
+              Sign in
+            </Button>
+          </SignInButton>
+          <SignUpButton mode="redirect">
+            <Button size="compact-sm">Sign up</Button>
+          </SignUpButton>
+        </Show>
+        <Show when="signed-in">
+          <UserButton />
+        </Show>
+        <Badge variant="light" color="indigo" radius="sm" visibleFrom="sm">
+          Local fixtures
+        </Badge>
+      </Group>
     </Group>
   );
 };

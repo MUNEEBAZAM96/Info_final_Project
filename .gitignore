@@ -3,6 +3,7 @@ node_modules
 dist
 coverage
 .env
+.env*.local
 *.sqlite
 *.tsbuildinfo
 .DS_Store
